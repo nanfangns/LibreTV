@@ -932,8 +932,8 @@ class CustomHlsJsLoader extends Hls.DefaultConfig.loader {
                 const onSuccess = callbacks.onSuccess;
                 callbacks.onSuccess = function (response, stats, context) {
                     if (response.data && typeof response.data === 'string') {
-                        // 1. 快速检查：如果都不包含 DISCONTINUITY，直接跳过处理，性能零损耗
-                        if (response.data.indexOf('#EXT-X-DISCONTINUITY') !== -1) {
+                        // 1. 快速检查：仅在检测到可能的广告标记时才处理，减少性能开销
+                        if (shouldFilterM3u8(response.data)) {
                             response.data = filterAdsFromM3U8(response.data);
                         }
                     }
@@ -945,23 +945,67 @@ class CustomHlsJsLoader extends Hls.DefaultConfig.loader {
     }
 }
 
+function shouldFilterM3u8(m3u8Content) {
+    return (
+        m3u8Content.indexOf('#EXT-X-DISCONTINUITY') !== -1 ||
+        m3u8Content.indexOf('#EXT-X-CUE-OUT') !== -1 ||
+        m3u8Content.indexOf('#EXT-X-CUE-IN') !== -1 ||
+        m3u8Content.indexOf('#EXT-X-DATERANGE') !== -1
+    );
+}
+
 // 优化的广告过滤函数：单次遍历，高性能
 function filterAdsFromM3U8(m3u8Content) {
     // 预分配数组大小，避免扩容开销
     const lines = m3u8Content.split('\n');
     const len = lines.length;
-    let result = '';
+    const output = [];
+    let skippingAdBlock = false;
+
+    const adSegmentPattern = /(?:^|[/?&_.-])(?:ad|ads|advert|advertisement|promo|commercial|preroll|midroll|postroll)(?:$|[/?&_.-])/i;
+    const adCueOutPattern = /^#EXT-X-(?:CUE-OUT|CUE-OUT-CONT|AD|SCTE35-OUT)/i;
+    const adCueInPattern = /^#EXT-X-(?:CUE-IN|SCTE35-IN)/i;
+    const adDateRangePattern = /^#EXT-X-DATERANGE:.*(?:CLASS|ID)=\"?[^\",]*?(?:AD|ADS|ADBREAK|COMMERCIAL|PROMO)[^\",]*\"?/i;
 
     // 字符串连接比数组 push 在现代 JS 引擎中往往更快，且内存占用更低
     for (let i = 0; i < len; i++) {
         const line = lines[i];
-        // 仅剔除 DISCONTINUITY 标签
-        // 有些采集站在广告插入前后会加上这个标签，导致播放卡顿
-        if (line.indexOf('#EXT-X-DISCONTINUITY') === -1) {
-            result += line + '\n';
+        if (!line) {
+            output.push(line);
+            continue;
         }
+
+        if (adCueOutPattern.test(line)) {
+            skippingAdBlock = true;
+            continue;
+        }
+
+        if (adDateRangePattern.test(line)) {
+            continue;
+        }
+
+        if (skippingAdBlock) {
+            if (adCueInPattern.test(line)) {
+                skippingAdBlock = false;
+            }
+            continue;
+        }
+
+        if (line.startsWith('#EXTINF')) {
+            const uriLine = lines[i + 1];
+            if (uriLine && !uriLine.startsWith('#') && adSegmentPattern.test(uriLine)) {
+                if (output.length && output[output.length - 1].startsWith('#EXT-X-DISCONTINUITY')) {
+                    output.pop();
+                }
+                i += 1;
+                continue;
+            }
+        }
+
+        // 仅在明确识别到广告段时移除 DISCONTINUITY，保留其他情况以避免破坏播放
+        output.push(line);
     }
-    return result;
+    return output.join('\n');
 }
 
 
