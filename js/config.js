@@ -163,6 +163,63 @@ const API_SITES = {
         name: '鲨鱼影视',
         adult: true
     },
+    // 来自 m.json 的 HTTP API（自动去重）
+    mjson_csp: {
+        api: 'http://c.小胡.icu/api.php/provide/vod',
+        name: '👒┃小胡┃资源┃',
+    },
+    mjson_csp_snzy: {
+        api: 'https://suoniapi.com/api.php/provide/vod/?ac=list',
+        name: '🐉┃索尼┃高清',
+    },
+    mjson_taopian: {
+        api: 'https://taopianapi.com/cjapi/mc/vod/json.html',
+        name: '🕹️淘片┃采集',
+    },
+    mjson_csp_2: {
+        api: 'http://ffzy1.tv/api.php/provide/vod',
+        name: '🥗┃非凡┃资源',
+    },
+    mjson_source: {
+        api: 'https://lzizy1.com/api.php/provide/vod',
+        name: '🥑┃量子┃资源',
+    },
+    mjson_49zy: {
+        api: 'https://49zy1.com/api.php/provide/vod/?ac=list',
+        name: '🦁┃四九┃资源',
+    },
+    mjson_feisu: {
+        api: 'https://www.feisuzyapi.com/api.php/provide/vod/?ac=list',
+        name: '🛰️飞速┃采集',
+    },
+    mjson_source_2: {
+        api: 'https://caiji.qhzyapi.com/api.php/provide/vod',
+        name: '🐯┃奇虎┃采集',
+    },
+    mjson_source_3: {
+        api: 'https://kekezy1.com/api.php/provide/vod/?ac=list',
+        name: '⛱┃可可┃采集',
+    },
+    mjson_source_4: {
+        api: 'https://www.huyaapi.com/api.php/provide/vod/from/hym3u8',
+        name: '🐯虎牙采集',
+    },
+    mjson_source_5: {
+        api: 'https://hhzyapi.com/api.php/provide/vod',
+        name: '🦊火狐采集',
+    },
+    mjson_source_6: {
+        api: 'https://app.bfzyapi.com/api.php/provide/vod',
+        name: '🌪️暴风影音',
+    },
+    mjson_source_7: {
+        api: 'https://api.apibdzy.com/api.php/provide/vod/?ac=list',
+        name: '🎏百度┃采集',
+    },
+    mjson_mv_vod: {
+        api: 'https://mv.wogg.link/mv/vod',
+        name: '🎶明星┃MV',
+    },
 };
 
 // 定义合并方法
