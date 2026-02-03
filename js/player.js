@@ -961,6 +961,8 @@ function filterAdsFromM3U8(m3u8Content) {
     const len = lines.length;
     const output = [];
     let skippingAdBlock = false;
+    let skippedAdSegments = 0;
+    const maxSkippedAdSegments = 20; // 保护阈值：防止没有 CUE-IN 时误删过多分片
 
     const adSegmentPattern = /(?:^|[/?&_.-])(?:ad|ads|advert|advertisement|promo|commercial|preroll|midroll|postroll)(?:$|[/?&_.-])/i;
     const adCueOutPattern = /^#EXT-X-(?:CUE-OUT|CUE-OUT-CONT|AD|SCTE35-OUT)/i;
@@ -977,6 +979,7 @@ function filterAdsFromM3U8(m3u8Content) {
 
         if (adCueOutPattern.test(line)) {
             skippingAdBlock = true;
+            skippedAdSegments = 0;
             continue;
         }
 
@@ -985,6 +988,14 @@ function filterAdsFromM3U8(m3u8Content) {
         }
 
         if (skippingAdBlock) {
+            if (line.startsWith('#EXTINF')) {
+                skippedAdSegments += 1;
+                if (skippedAdSegments >= maxSkippedAdSegments) {
+                    skippingAdBlock = false;
+                    output.push(line);
+                    continue;
+                }
+            }
             if (adCueInPattern.test(line)) {
                 skippingAdBlock = false;
             }
