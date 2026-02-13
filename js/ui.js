@@ -977,6 +977,9 @@ document.addEventListener('DOMContentLoaded', function () {
     const body = document.body;
     let lastScrollY = window.scrollY;
     let isSideMode = false;
+    let isSearchAreaOutOfView = false;
+    let searchArea = null;
+    let searchAreaObserver = null;
 
     const setSideMode = (enabled) => {
         if (isSideMode === enabled) return;
@@ -1007,22 +1010,55 @@ document.addEventListener('DOMContentLoaded', function () {
 
     const stickyHeader = document.querySelector('.sticky-header');
     const stickySearch = stickyHeader ? stickyHeader.querySelector('.sticky-header-search') : null;
+    const refreshSearchAreaObserver = () => {
+        if (searchAreaObserver) {
+            searchAreaObserver.disconnect();
+            searchAreaObserver = null;
+        }
+
+        searchArea = document.getElementById('searchArea');
+        if (!searchArea || !stickyHeader || !stickySearch) {
+            isSearchAreaOutOfView = false;
+            updateStickySearchVisibility();
+            return;
+        }
+
+        if (!('IntersectionObserver' in window)) {
+            isSearchAreaOutOfView = searchArea.getBoundingClientRect().bottom <= 0;
+            updateStickySearchVisibility();
+            return;
+        }
+
+        searchAreaObserver = new IntersectionObserver((entries) => {
+            const [entry] = entries;
+            if (!entry) return;
+            isSearchAreaOutOfView = entry.boundingClientRect.bottom <= 0 && !entry.isIntersecting;
+            updateStickySearchVisibility();
+        }, {
+            threshold: 0,
+        });
+
+        searchAreaObserver.observe(searchArea);
+    };
+
     const updateStickySearchVisibility = (sideModeEnabled = isSideMode) => {
         if (!stickyHeader || !stickySearch) return;
-        const searchArea = document.getElementById('searchArea');
         if (!searchArea) {
             stickyHeader.classList.remove('sticky-header--show-search');
             stickySearch.setAttribute('aria-hidden', 'true');
             return;
         }
-        const searchAreaBottom = searchArea.getBoundingClientRect().bottom;
-        const shouldShow = sideModeEnabled && searchAreaBottom <= 0;
+        const shouldShow = sideModeEnabled && isSearchAreaOutOfView;
         stickyHeader.classList.toggle('sticky-header--show-search', shouldShow);
         stickySearch.setAttribute('aria-hidden', (!shouldShow).toString());
     };
 
+    refreshSearchAreaObserver();
     syncToViewport();
     updateStickySearchVisibility();
     window.addEventListener('scroll', handleScroll, { passive: true });
-    window.addEventListener('resize', syncToViewport);
+    window.addEventListener('resize', () => {
+        syncToViewport();
+        refreshSearchAreaObserver();
+    });
 });
