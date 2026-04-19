@@ -198,20 +198,49 @@ export async function onRequest(context) {
         // 强制伪装 Referer 和 Origin 以绕过防盗链
         const urlObj = new URL(targetUrl);
         const targetOrigin = urlObj.origin;
+        const targetHostname = urlObj.hostname.toLowerCase();
         // 使用规范化后的 URL (自动处理中文等特殊字符的编码)
         const normalizedUrl = urlObj.href;
+        const requestRange = request.headers.get('Range');
+        const requestIfRange = request.headers.get('If-Range');
 
-        const headers = new Headers({
-            'User-Agent': getRandomUserAgent(),
-            'Accept': '*/*',
-            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-            'Referer': targetOrigin,
-            'Origin': targetOrigin
-        });
+        const upstreamMethod = request.method === 'HEAD' ? 'HEAD' : 'GET';
+        function createUpstreamHeaders(includeOriginHeaders = false) {
+            const headers = new Headers({
+                'User-Agent': getRandomUserAgent(),
+                'Accept': '*/*',
+                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
+            });
+            if (includeOriginHeaders) {
+                if (targetHostname.endsWith('.doubanio.com') || targetHostname === 'doubanio.com') {
+                    headers.set('Referer', 'https://movie.douban.com/');
+                    headers.set('Origin', 'https://movie.douban.com');
+                } else {
+                    headers.set('Referer', targetOrigin);
+                    headers.set('Origin', targetOrigin);
+                }
+            }
+            if (requestRange) headers.set('Range', requestRange);
+            if (requestIfRange) headers.set('If-Range', requestIfRange);
+            return headers;
+        }
 
         try {
             logDebug(`开始直接请求: ${normalizedUrl}`);
-            const response = await fetch(normalizedUrl, { headers, redirect: 'follow' });
+            let response = await fetch(normalizedUrl, {
+                method: upstreamMethod,
+                headers: createUpstreamHeaders(false),
+                redirect: 'follow'
+            });
+
+            if (response.status === 401 || response.status === 403 || response.status === 418) {
+                logDebug(`涓婃父杩斿洖 ${response.status}锛屽皾璇曞甫 Referer/Origin 閲嶈瘯: ${normalizedUrl}`);
+                response = await fetch(normalizedUrl, {
+                    method: upstreamMethod,
+                    headers: createUpstreamHeaders(true),
+                    redirect: 'follow'
+                });
+            }
 
             // 移除错误抛出，直接透传响应状态，让前端 Hls.js 处理重试逻辑
             if (!response.ok) {

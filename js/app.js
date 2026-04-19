@@ -1273,57 +1273,54 @@ async function loadSourceDetail(sourceCode, vodId, sourceName) {
     try {
         // 获取 API 基础信息
         // 内置或自定义
-        let apiBaseUrl = '';
+        let detailApiUrl = `/api/detail?id=${encodeURIComponent(vodId)}`;
         if (sourceCode.startsWith('custom_')) {
             const api = getCustomApiInfo(sourceCode.replace('custom_', ''));
-            if (api) apiBaseUrl = api.url;
+            if (!api?.url) throw new Error('API config not found');
+            detailApiUrl += `&source=custom&customApi=${encodeURIComponent(api.url)}`;
+            if (api.detail) {
+                detailApiUrl += `&customDetail=${encodeURIComponent(api.detail)}`;
+            }
         } else if (API_SITES[sourceCode]) {
-            apiBaseUrl = API_SITES[sourceCode].api;
+            detailApiUrl += `&source=${encodeURIComponent(sourceCode)}`;
+        } else {
+            throw new Error('未找到 API 配置');
         }
 
-        if (!apiBaseUrl) throw new Error('未找到API配置');
+        if (!detailApiUrl) throw new Error('未找到 API 配置');
 
         // 构建详情URL
-        const detailUrl = apiBaseUrl + API_CONFIG.detail.path + vodId;
+        const detailUrl = detailApiUrl;
 
         // 代理请求
-        const proxiedUrl = await window.ProxyAuth?.addAuthToProxyUrl ?
-            await window.ProxyAuth.addAuthToProxyUrl(PROXY_URL + encodeURIComponent(detailUrl)) :
-            PROXY_URL + encodeURIComponent(detailUrl);
-
-        const response = await fetch(proxiedUrl, {
-            headers: API_CONFIG.detail.headers,
-            signal: AbortSignal.timeout(10000)
+        const response = await fetch(detailUrl, {
+            signal: AbortSignal.timeout(20000)
         });
 
         if (!response.ok) throw new Error('API请求失败');
 
         const data = await response.json();
-        if (!data || !data.list || !data.list[0]) throw new Error('无数据返回');
-
-        const videoDetail = data.list[0];
-
-        // 解析播放列表
-        let episodes = [];
-        if (videoDetail.vod_play_url) {
-            const playSources = videoDetail.vod_play_url.split('$$$');
-            // 通常取第一个m3u8源，或者根据播放器配置优选。这里简化取第一个。
-            if (playSources.length > 0) {
-                const mainSource = playSources[0]; // 这是一个包含所有集数的字符串
-                const episodeList = mainSource.split('#');
-                episodes = episodeList.map(ep => {
-                    const parts = ep.split('$');
-                    return parts.length > 1 ? parts[1] : '';
-                }).filter(url => url && (url.startsWith('http://') || url.startsWith('https://')));
-            }
-        }
+        if (!data || data.code !== 200) throw new Error(data?.msg || 'No detail data');
+        const episodes = Array.isArray(data.episodes) ? data.episodes : [];
+        const videoInfo = data.videoInfo || {};
+        if (episodes.length === 0) throw new Error('No playable episodes found');
+        const normalizedInfo = {
+            vod_name: videoInfo.title || sourceName,
+            vod_pic: videoInfo.cover || '',
+            vod_content: videoInfo.desc || '',
+            vod_year: videoInfo.year || '',
+            vod_area: videoInfo.area || '',
+            vod_director: videoInfo.director || '',
+            vod_actor: videoInfo.actor || '',
+            vod_remarks: videoInfo.remarks || ''
+        };
 
         // [修复] 更新全局 currentEpisodes，确保点击播放时能传递正确的集数列表
         currentEpisodes = episodes;
         window.currentEpisodes = episodes;
 
         // 更新 UI
-        renderSourceDetailContent(container, videoDetail, episodes, sourceCode, vodId, sourceName);
+        renderSourceDetailContent(container, normalizedInfo, episodes, sourceCode, vodId, sourceName);
 
     } catch (error) {
         console.error('加载源详情失败:', error);

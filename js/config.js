@@ -59,6 +59,11 @@ const API_SITES = {
         api: 'https://wolongzyw.com/api.php/provide/vod',
         name: '卧龙资源',
     },
+    fourkvm: {
+        api: 'https://www.4kvm.net',
+        name: '4KVM',
+        parser: '4kvm',
+    },
     hwba: {
         api: 'https://cjhwba.com/api.php/provide/vod',
         name: '华为吧资源',

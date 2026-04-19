@@ -1,4 +1,355 @@
 // 改进的API请求处理函数
+const SPECIAL_SOURCE_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+const SPECIAL_SOURCE_HTML_HEADERS = {
+    'User-Agent': SPECIAL_SOURCE_USER_AGENT,
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+};
+const SPECIAL_SOURCE_JSON_HEADERS = {
+    'User-Agent': SPECIAL_SOURCE_USER_AGENT,
+    'Accept': 'application/json,text/plain,*/*'
+};
+
+async function buildProxiedUrl(targetUrl) {
+    return window.ProxyAuth?.addAuthToProxyUrl
+        ? await window.ProxyAuth.addAuthToProxyUrl(PROXY_URL + encodeURIComponent(targetUrl))
+        : PROXY_URL + encodeURIComponent(targetUrl);
+}
+
+async function fetchProxiedResponse(targetUrl, options = {}) {
+    const proxiedUrl = await buildProxiedUrl(targetUrl);
+    return fetch(proxiedUrl, options);
+}
+
+async function fetchProxiedText(targetUrl, options = {}) {
+    const response = await fetchProxiedResponse(targetUrl, options);
+    if (!response.ok) {
+        throw new Error(`请求失败: ${response.status}`);
+    }
+    return await response.text();
+}
+
+async function fetchProxiedJson(targetUrl, options = {}) {
+    const response = await fetchProxiedResponse(targetUrl, options);
+    if (!response.ok) {
+        throw new Error(`请求失败: ${response.status}`);
+    }
+    return await response.json();
+}
+
+async function fetchProxiedArrayBuffer(targetUrl, options = {}) {
+    const response = await fetchProxiedResponse(targetUrl, options);
+    if (!response.ok) {
+        throw new Error(`请求失败: ${response.status}`);
+    }
+    return await response.arrayBuffer();
+}
+
+function parseHtmlDocument(html) {
+    return new DOMParser().parseFromString(html, 'text/html');
+}
+
+function getAbsoluteUrl(baseUrl, url) {
+    if (!url) return '';
+    try {
+        return new URL(url, baseUrl).toString();
+    } catch (error) {
+        return url;
+    }
+}
+
+function getTextContent(element) {
+    return element ? element.textContent.replace(/\s+/g, ' ').trim() : '';
+}
+
+function get4kvmWasmCache() {
+    if (!window.__FOURKVM_WASM_CACHE__) {
+        window.__FOURKVM_WASM_CACHE__ = new Map();
+    }
+    return window.__FOURKVM_WASM_CACHE__;
+}
+
+async function get4kvmWasmModule(wasmConfig) {
+    if (!wasmConfig?.jsUrl || !wasmConfig?.wasmUrl) {
+        throw new Error('4KVM wasm 配置缺失');
+    }
+
+    const cacheKey = `${wasmConfig.jsUrl}|${wasmConfig.wasmUrl}`;
+    const cache = get4kvmWasmCache();
+
+    if (cache.has(cacheKey)) {
+        return await cache.get(cacheKey);
+    }
+
+    const loadPromise = (async () => {
+        const jsSource = await fetchProxiedText(wasmConfig.jsUrl, {
+            headers: SPECIAL_SOURCE_HTML_HEADERS
+        });
+        const wasmBytes = await fetchProxiedArrayBuffer(wasmConfig.wasmUrl, {
+            headers: SPECIAL_SOURCE_JSON_HEADERS
+        });
+
+        const blobUrl = URL.createObjectURL(new Blob([jsSource], { type: 'text/javascript' }));
+
+        try {
+            const wasmModule = await import(blobUrl);
+            if (typeof wasmModule.initSync === 'function') {
+                wasmModule.initSync({ module: wasmBytes });
+            }
+            return wasmModule;
+        } finally {
+            URL.revokeObjectURL(blobUrl);
+        }
+    })().catch(error => {
+        cache.delete(cacheKey);
+        throw error;
+    });
+
+    cache.set(cacheKey, loadPromise);
+    return await loadPromise;
+}
+
+function prepare4kvmRuntimeMeta(metaConfig = {}) {
+    const entries = {
+        'nb-st': metaConfig.nbSt || '',
+        'nb-plt': Date.now().toString()
+    };
+    const cleanupTasks = [];
+
+    Object.entries(entries).forEach(([id, content]) => {
+        if (!content) return;
+
+        let element = document.getElementById(id);
+        const created = !element;
+        const previousContent = element ? element.getAttribute('content') : null;
+
+        if (!element) {
+            element = document.createElement('meta');
+            element.id = id;
+            document.head.appendChild(element);
+        }
+
+        element.setAttribute('content', content);
+
+        cleanupTasks.push(() => {
+            if (created) {
+                element.remove();
+                return;
+            }
+
+            if (previousContent === null) {
+                element.removeAttribute('content');
+            } else {
+                element.setAttribute('content', previousContent);
+            }
+        });
+    });
+
+    return () => {
+        cleanupTasks.reverse().forEach(task => task());
+    };
+}
+
+function pick4kvmPlayableUrl(playData) {
+    const qualityUrls = Array.isArray(playData?.quality_urls) ? playData.quality_urls : [];
+    const currentQuality = qualityUrls[playData?.current_quality];
+
+    if (currentQuality?.url && currentQuality.url !== '1' && currentQuality.locked !== true) {
+        return currentQuality.url;
+    }
+
+    const candidates = qualityUrls
+        .filter(item => item?.url && item.url !== '1' && item.locked !== true)
+        .sort((a, b) => (Number(b?.bitrate) || 0) - (Number(a?.bitrate) || 0));
+
+    return candidates[0]?.url || '';
+}
+
+async function mapWithConcurrency(items, limit, mapper) {
+    const results = new Array(items.length);
+    let currentIndex = 0;
+
+    async function worker() {
+        while (true) {
+            const index = currentIndex++;
+            if (index >= items.length) break;
+            results[index] = await mapper(items[index], index);
+        }
+    }
+
+    const workerCount = Math.min(limit, items.length);
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+    return results;
+}
+
+function parse4kvmSearchResults(html, sourceCode) {
+    const doc = parseHtmlDocument(html);
+    const sourceName = API_SITES[sourceCode]?.name || '4KVM';
+    const cards = Array.from(doc.querySelectorAll('a[href^="/play/"].block'));
+    const seen = new Set();
+    const results = [];
+
+    cards.forEach(card => {
+        const href = card.getAttribute('href') || '';
+        const vodId = href.match(/^\/play\/([^/?#]+)/)?.[1] || '';
+        const title = getTextContent(card.querySelector('h3')) || (card.querySelector('img')?.getAttribute('alt') || '').trim();
+
+        if (!vodId || !title || seen.has(vodId)) {
+            return;
+        }
+
+        seen.add(vodId);
+
+        const image = card.querySelector('img');
+        const cover = getAbsoluteUrl('https://www.4kvm.net', image?.getAttribute('data-src') || image?.getAttribute('src') || '');
+        const desc = getTextContent(card.querySelector('p'));
+
+        results.push({
+            vod_id: vodId,
+            vod_name: title,
+            vod_pic: cover,
+            vod_remarks: '',
+            vod_content: desc,
+            source_name: sourceName,
+            source_code: sourceCode
+        });
+    });
+
+    return results;
+}
+
+async function fetch4kvmSearchResults(searchQuery, sourceCode) {
+    const searchUrl = `https://www.4kvm.net/search?q=${encodeURIComponent(searchQuery)}`;
+    const html = await fetchProxiedText(searchUrl, {
+        headers: SPECIAL_SOURCE_HTML_HEADERS
+    });
+    return parse4kvmSearchResults(html, sourceCode);
+}
+
+function parse4kvmDetailPage(html) {
+    const doc = parseHtmlDocument(html);
+    const pageBaseUrl = 'https://www.4kvm.net/';
+    const title = getTextContent(doc.querySelector('h1')) ||
+        (doc.querySelector('meta[property=\"og:title\"]')?.getAttribute('content') || '').split(' - 第')[0].trim();
+    const cover = getAbsoluteUrl(pageBaseUrl, doc.querySelector('meta[property=\"og:image\"]')?.getAttribute('content') || '');
+    const desc = (doc.querySelector('meta[name=\"description\"]')?.getAttribute('content') || '').trim();
+    const playKey = html.match(/userlink:'([^']*)'/)?.[1] || '0';
+    const nbSt = doc.querySelector('#nb-st')?.getAttribute('content') || '';
+
+    const wasmConfigElement = doc.querySelector('#wasm-cfg');
+    const wasmConfig = {
+        jsUrl: getAbsoluteUrl(pageBaseUrl, wasmConfigElement?.getAttribute('data-js') || ''),
+        wasmUrl: getAbsoluteUrl(pageBaseUrl, wasmConfigElement?.getAttribute('data-bg') || '')
+    };
+
+    const anchors = Array.from(doc.querySelectorAll('a[dataid][href^=\"/play/\"]'));
+    const seen = new Set();
+    const episodes = [];
+
+    anchors.forEach((anchor, index) => {
+        const href = anchor.getAttribute('href') || '';
+        const secretKey = href.match(/^\/play\/([^/?#]+)/)?.[1] || '';
+        const dataid = (anchor.getAttribute('dataid') || '').trim();
+        const line = parseInt(anchor.getAttribute('data-line') || '1', 10);
+        const episode = parseInt(anchor.getAttribute('data-episode') || `${index + 1}`, 10);
+        const uniqueKey = `${line}_${episode}_${secretKey}_${dataid}`;
+
+        if (!secretKey || !dataid || seen.has(uniqueKey)) {
+            return;
+        }
+
+        seen.add(uniqueKey);
+        episodes.push({
+            line: Number.isFinite(line) && line > 0 ? line : 1,
+            episode: Number.isFinite(episode) && episode > 0 ? episode : index + 1,
+            dataid,
+            secretKey
+        });
+    });
+
+    if (episodes.length === 0) {
+        throw new Error('未找到 4KVM 剧集信息');
+    }
+
+    const primaryLine = Math.min(...episodes.map(item => item.line));
+    const primaryEpisodes = episodes
+        .filter(item => item.line === primaryLine)
+        .sort((a, b) => a.episode - b.episode);
+
+    return {
+        title,
+        cover,
+        desc,
+        playKey,
+        wasmConfig,
+        meta: { nbSt },
+        episodes: primaryEpisodes
+    };
+}
+
+async function resolve4kvmEpisodeUrl(episode, detailPageData) {
+    const wasmModule = await get4kvmWasmModule(detailPageData.wasmConfig);
+    const restoreMeta = prepare4kvmRuntimeMeta(detailPageData.meta);
+    let playApiPath = '';
+
+    try {
+        playApiPath = wasmModule.build_play_url(
+            String(episode.dataid || ''),
+            String(episode.secretKey || ''),
+            '1080',
+            String(detailPageData.playKey || '0')
+        );
+    } finally {
+        restoreMeta();
+    }
+
+    const playApiUrl = getAbsoluteUrl('https://www.4kvm.net/', playApiPath);
+    const playData = await fetchProxiedJson(playApiUrl, {
+        headers: SPECIAL_SOURCE_JSON_HEADERS
+    });
+
+    const playableUrl = pick4kvmPlayableUrl(playData?.data);
+    if (!playableUrl) {
+        throw new Error('未返回可播放地址');
+    }
+
+    return playableUrl;
+}
+
+async function handle4kvmDetail(id, sourceCode) {
+    const detailUrl = `https://www.4kvm.net/play/${encodeURIComponent(id)}`;
+    const html = await fetchProxiedText(detailUrl, {
+        headers: SPECIAL_SOURCE_HTML_HEADERS
+    });
+    const detailPageData = parse4kvmDetailPage(html);
+
+    const episodeUrls = await mapWithConcurrency(detailPageData.episodes, 4, async (episode) => {
+        try {
+            return await resolve4kvmEpisodeUrl(episode, detailPageData);
+        } catch (error) {
+            console.warn(`4KVM 剧集解析失败: ${episode.secretKey}`, error);
+            return '';
+        }
+    });
+
+    const episodes = episodeUrls.filter(Boolean);
+    if (episodes.length === 0) {
+        throw new Error('4KVM 未解析到可播放地址');
+    }
+
+    return {
+        code: 200,
+        episodes,
+        detailUrl,
+        videoInfo: {
+            title: detailPageData.title,
+            cover: detailPageData.cover,
+            desc: detailPageData.desc,
+            source_name: API_SITES[sourceCode].name,
+            source_code: sourceCode
+        }
+    };
+}
+
 async function handleApiRequest(url) {
     const customApi = url.searchParams.get('customApi') || '';
     const customDetail = url.searchParams.get('customDetail') || '';
@@ -18,6 +369,14 @@ async function handleApiRequest(url) {
 
             if (!API_SITES[source] && source !== 'custom') {
                 throw new Error('无效的API来源');
+            }
+
+            if (source !== 'custom' && API_SITES[source]?.parser === '4kvm') {
+                const list = await fetch4kvmSearchResults(searchQuery, source);
+                return JSON.stringify({
+                    code: 200,
+                    list
+                });
             }
 
             const apiUrl = customApi
@@ -96,6 +455,10 @@ async function handleApiRequest(url) {
             }
 
             // 对于有detail参数的源，都使用特殊处理方式
+            if (sourceCode !== 'custom' && API_SITES[sourceCode]?.parser === '4kvm') {
+                return JSON.stringify(await handle4kvmDetail(id, sourceCode));
+            }
+
             if (sourceCode !== 'custom' && API_SITES[sourceCode].detail) {
                 return await handleSpecialSourceDetail(id, sourceCode);
             }
@@ -369,6 +732,10 @@ async function handleAggregatedSearch(searchQuery) {
     // 创建所有API源的搜索请求
     const searchPromises = availableSources.map(async (source) => {
         try {
+            if (API_SITES[source]?.parser === '4kvm') {
+                return await fetch4kvmSearchResults(searchQuery, source);
+            }
+
             const apiUrl = `${API_SITES[source].api}${API_CONFIG.search.path}${encodeURIComponent(searchQuery)}`;
 
             // 使用Promise.race添加超时处理

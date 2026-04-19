@@ -20,6 +20,19 @@ async function searchByAPIAndKeyWord(apiId, query) {
         }
         
         // 添加超时处理
+        if (!apiId.startsWith('custom_') && API_SITES[apiId]?.parser === '4kvm') {
+            const response = await fetch(`/api/search?source=${encodeURIComponent(apiId)}&wd=${encodeURIComponent(query)}`, {
+                signal: AbortSignal.timeout(15000)
+            });
+
+            if (!response.ok) {
+                return [];
+            }
+
+            const data = await response.json();
+            return Array.isArray(data?.list) ? data.list : [];
+        }
+
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 15000);
         

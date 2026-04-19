@@ -555,6 +555,40 @@ function showShortcutHint(text, direction) {
     }, 2000);
 }
 
+function unwrapProxyVideoUrl(url) {
+    if (!url || !url.startsWith('/proxy/')) return url || '';
+    const encodedTarget = url.slice('/proxy/'.length).split('?')[0];
+    try {
+        return decodeURIComponent(encodedTarget);
+    } catch (error) {
+        return url;
+    }
+}
+
+function detectVideoType(url) {
+    const originalUrl = unwrapProxyVideoUrl(url);
+    if (!originalUrl) return 'm3u8';
+
+    try {
+        const parsedUrl = new URL(originalUrl, window.location.origin);
+        const responseContentType = (parsedUrl.searchParams.get('response-content-type') || '').toLowerCase();
+        if (responseContentType.includes('video/mp4')) return 'mp4';
+        if (responseContentType.includes('application/vnd.apple.mpegurl') || responseContentType.includes('application/x-mpegurl')) return 'm3u8';
+
+        const pathname = parsedUrl.pathname.toLowerCase();
+        if (pathname.endsWith('.m3u8')) return 'm3u8';
+        if (pathname.endsWith('.mp4') || pathname.endsWith('.m4v') || pathname.endsWith('.webm') || pathname.endsWith('.ogg') || pathname.endsWith('.mov')) {
+            return 'mp4';
+        }
+    } catch (error) {
+        const lowerUrl = originalUrl.toLowerCase();
+        if (lowerUrl.includes('.m3u8')) return 'm3u8';
+        if (lowerUrl.includes('.mp4') || lowerUrl.includes('video/mp4')) return 'mp4';
+    }
+
+    return 'm3u8';
+}
+
 // 初始化播放器
 function initPlayer(videoUrl) {
     if (!videoUrl) {
@@ -601,11 +635,13 @@ function initPlayer(videoUrl) {
         liveDurationInfinity: false
     };
 
+    const videoType = detectVideoType(videoUrl);
+
     // Create new ArtPlayer instance
     art = new Artplayer({
         container: '#player',
         url: videoUrl,
-        type: 'm3u8',
+        type: videoType,
         title: videoTitle,
         volume: 0.8,
         isLive: false,
@@ -1045,7 +1081,7 @@ function renderEpisodes() {
 }
 
 // 播放指定集数
-function playEpisode(index) {
+async function playEpisode(index) {
     // 确保index在有效范围内
     if (index < 0 || index >= currentEpisodes.length) {
         return;
@@ -1076,14 +1112,15 @@ function playEpisode(index) {
     const sourceCode = urlParams2.get('source_code');
 
     // 准备切换剧集的URL
-    const url = currentEpisodes[index];
+    let url = currentEpisodes[index];
 
     // 更新当前剧集索引
     currentEpisodeIndex = index;
-    currentVideoUrl = url;
     videoHasEnded = false; // 重置视频结束标志
 
     clearVideoProgress();
+
+    currentVideoUrl = url;
 
     // 更新URL参数（不刷新页面）
     const currentUrl = new URL(window.location.href);

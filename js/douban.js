@@ -590,6 +590,54 @@ async function fetchDoubanData(url) {
 }
 
 // 渲染豆瓣卡片 - Masonry Layout Optimization version
+const DOUBAN_CARD_FALLBACK_IMAGE = 'image/nomedia.png';
+const DOUBAN_PROXY_FIRST_HOSTS = ['xhscdn.com', 'xiaohongshu.com', 'doubanio.com'];
+
+function getDoubanProxyUrl(url) {
+    return url ? PROXY_URL + encodeURIComponent(url) : '';
+}
+
+function shouldUseProxyFirstForDoubanCover(url) {
+    if (!url) return false;
+    try {
+        const hostname = new URL(url).hostname.toLowerCase();
+        return DOUBAN_PROXY_FIRST_HOSTS.some(domain => hostname === domain || hostname.endsWith(`.${domain}`));
+    } catch (error) {
+        return false;
+    }
+}
+
+function markDoubanCoverLoaded(img) {
+    if (!img) return;
+    img.classList.add('loaded');
+    img.parentElement?.classList.remove('skeleton');
+}
+
+function handleDoubanCoverError(img) {
+    if (!img) return;
+
+    const fallbackSrc = img.dataset.fallbackSrc || '';
+    if (fallbackSrc && img.dataset.fallbackTried !== '1' && img.currentSrc !== fallbackSrc && img.src !== fallbackSrc) {
+        img.dataset.fallbackTried = '1';
+        img.src = fallbackSrc;
+        return;
+    }
+
+    if (img.dataset.placeholderApplied !== '1') {
+        img.dataset.placeholderApplied = '1';
+        img.src = DOUBAN_CARD_FALLBACK_IMAGE;
+    }
+
+    markDoubanCoverLoaded(img);
+}
+
+function setupDoubanCoverImage(img) {
+    if (!img) return;
+    if (img.complete && img.naturalWidth > 0) {
+        markDoubanCoverLoaded(img);
+    }
+}
+
 function renderDoubanCards(data, container, isAppend = false) {
     // 1. 确保容器初始化为 Masonry 结构
     initMasonryStructure(container);
@@ -617,20 +665,24 @@ function renderDoubanCards(data, container, isAppend = false) {
         // 添加动画延迟，实现瀑布流式进场
         cardDiv.style.animationDelay = `${index * 50}ms`;
 
-        const safeTitle = (item.title || "").replace(/"/g, '&quot;');
+        const safeTitle = (item.title || "").replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         const safeRate = item.rate || "暂无";
-        const originalCoverUrl = item.cover;
-        const proxiedCoverUrl = PROXY_URL + encodeURIComponent(originalCoverUrl);
+        const originalCoverUrl = item.cover || '';
+        const proxiedCoverUrl = getDoubanProxyUrl(originalCoverUrl);
+        const useProxyFirst = shouldUseProxyFirstForDoubanCover(originalCoverUrl);
+        const initialCoverUrl = useProxyFirst ? proxiedCoverUrl : originalCoverUrl;
+        const fallbackCoverUrl = useProxyFirst ? originalCoverUrl : proxiedCoverUrl;
 
         // 高度微扰优化：随机 padding-bottom (0.6rem ~ 1.4rem)
         const randomPb = (0.6 + Math.random() * 0.8).toFixed(2);
 
         cardDiv.innerHTML = `
             <div class="relative w-full aspect-[2/3] cursor-pointer bg-[#1a1c22] skeleton overflow-hidden" onclick="fillAndSearchWithDouban('${safeTitle}')">
-                <img src="${originalCoverUrl}" alt="${safeTitle}" 
+                <img src="${initialCoverUrl || DOUBAN_CARD_FALLBACK_IMAGE}" alt="${safeTitle}" 
                     class="w-full h-auto object-cover transition-transform duration-700 group-hover:scale-105 smooth-img"
-                    onload="this.classList.add('loaded'); this.parentElement.classList.remove('skeleton');"
-                    onerror="this.onerror=null; this.src='${proxiedCoverUrl}';"
+                    data-fallback-src="${fallbackCoverUrl}"
+                    onload="markDoubanCoverLoaded(this);"
+                    onerror="handleDoubanCoverError(this);"
                     loading="lazy" referrerpolicy="no-referrer">
                 
                 <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
@@ -655,6 +707,7 @@ function renderDoubanCards(data, container, isAppend = false) {
                 </button>
             </div>
         `;
+        setupDoubanCoverImage(cardDiv.querySelector('img'));
         return cardDiv;
     });
 
