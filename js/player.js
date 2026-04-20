@@ -968,8 +968,8 @@ class CustomHlsJsLoader extends Hls.DefaultConfig.loader {
                 const onSuccess = callbacks.onSuccess;
                 callbacks.onSuccess = function (response, stats, context) {
                     if (response.data && typeof response.data === 'string') {
-                        // 1. 快速检查：如果都不包含 DISCONTINUITY，直接跳过处理，性能零损耗
-                        if (response.data.indexOf('#EXT-X-DISCONTINUITY') !== -1) {
+                        // 只在检测到明显广告标记时才过滤，避免把正常时间轴标记删掉导致跳播
+                        if (shouldFilterAdsFromM3U8(response.data)) {
                             response.data = filterAdsFromM3U8(response.data);
                         }
                     }
@@ -979,6 +979,25 @@ class CustomHlsJsLoader extends Hls.DefaultConfig.loader {
             load(context, config, callbacks);
         };
     }
+}
+
+function shouldFilterAdsFromM3U8(m3u8Content) {
+    if (!m3u8Content || m3u8Content.indexOf('#EXT-X-DISCONTINUITY') === -1) {
+        return false;
+    }
+
+    const lowerContent = m3u8Content.toLowerCase();
+    const adMarkers = [
+        '#ext-x-cue-out',
+        '#ext-x-cue-in',
+        '#ext-x-daterange',
+        '/ad/',
+        'advert',
+        'adjump',
+        'promotion'
+    ];
+
+    return adMarkers.some(marker => lowerContent.includes(marker));
 }
 
 // 优化的广告过滤函数：单次遍历，高性能
