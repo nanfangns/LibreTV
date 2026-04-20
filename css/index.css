@@ -869,7 +869,7 @@
     z-index: 30;
     margin-left: -0.5rem;
     margin-right: -0.5rem;
-    padding: 1rem 0.5rem;
+    padding: 1rem max(0.5rem, calc(14.5rem - max(0px, (100vw - 1280px) / 2))) 1rem 0.5rem;
     background: rgba(2, 4, 8, 0.82);
     backdrop-filter: blur(20px) saturate(180%);
     -webkit-backdrop-filter: blur(20px) saturate(180%);
